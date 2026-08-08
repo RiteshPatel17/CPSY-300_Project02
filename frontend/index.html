@@ -75,6 +75,43 @@
         </section>
 
         <section class="mb-8">
+            <h2 class="text-2xl font-semibold mb-4">Search &amp; Browse Recipes</h2>
+            <p class="text-sm text-gray-600 mb-2">Searches and paginates the full dataset via the <code>/search</code> API — served from cache.</p>
+            <div class="flex flex-wrap gap-4 mb-2">
+                <input id="recipeKeyword" type="text" placeholder="Search recipe name..." class="p-2 border rounded w-full sm:w-64">
+                <select id="recipeDietFilter" class="p-2 border rounded w-full sm:w-auto">
+                    <option value="all">All Diet Types</option>
+                    <option value="vegan">Vegan</option>
+                    <option value="keto">Keto</option>
+                    <option value="paleo">Paleo</option>
+                    <option value="mediterranean">Mediterranean</option>
+                    <option value="dash">Dash</option>
+                </select>
+            </div>
+            <p id="recipeSearchStatus" class="text-sm text-gray-500 mb-2">Loading recipes...</p>
+            <div class="overflow-x-auto bg-white shadow-lg rounded-lg">
+                <table class="min-w-full text-sm text-left">
+                    <thead class="bg-gray-200">
+                        <tr>
+                            <th class="p-2">Recipe Name</th>
+                            <th class="p-2">Diet Type</th>
+                            <th class="p-2">Cuisine Type</th>
+                            <th class="p-2">Protein(g)</th>
+                            <th class="p-2">Carbs(g)</th>
+                            <th class="p-2">Fat(g)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recipeResultsBody"></tbody>
+                </table>
+            </div>
+            <div class="flex justify-center items-center gap-2 mt-4">
+                <button id="recipePrevPage" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Previous</button>
+                <span id="recipePageIndicator" class="px-3 py-1">Page 1</span>
+                <button id="recipeNextPage" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Next</button>
+            </div>
+        </section>
+
+        <section class="mb-8">
             <h2 class="text-2xl font-semibold mb-4">Results</h2>
             <div class="overflow-x-auto bg-white shadow-lg rounded-lg">
                 <table class="min-w-full text-sm text-left">
@@ -298,6 +335,76 @@
             const totalPages = Math.max(1, Math.ceil(getFilteredData().length / PAGE_SIZE));
             if (currentPage < totalPages) { currentPage++; renderTable(); }
         });
+
+        // ---- Search & Browse Recipes (server-side search + pagination via /search) ----
+        const SEARCH_ENDPOINT = `${API_BASE}/search`;
+        let recipeSearchPage = 1;
+        const RECIPE_PAGE_SIZE = 10;
+        let recipeSearchDebounce = null;
+
+        async function fetchRecipeSearch() {
+            const keyword = document.getElementById("recipeKeyword").value.trim();
+            const dietType = document.getElementById("recipeDietFilter").value;
+            const status = document.getElementById("recipeSearchStatus");
+
+            status.textContent = "Searching...";
+            try {
+                const url = new URL(SEARCH_ENDPOINT);
+                url.searchParams.set("page", recipeSearchPage);
+                url.searchParams.set("page_size", RECIPE_PAGE_SIZE);
+                if (keyword) url.searchParams.set("keyword", keyword);
+                if (dietType && dietType !== "all") url.searchParams.set("diet_type", dietType);
+
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = await res.json();
+
+                renderRecipeResults(json.data);
+                const { page, total_pages, total_count } = json.pagination;
+                document.getElementById("recipePageIndicator").textContent = `Page ${page} of ${total_pages}`;
+                status.textContent = `${total_count} recipes found — served from ${json.source} in ${json.execution_time_ms} ms`;
+            } catch (err) {
+                status.textContent = `Error: ${err.message}`;
+                console.error(err);
+            }
+        }
+
+        function renderRecipeResults(rows) {
+            const body = document.getElementById("recipeResultsBody");
+            if (!rows || rows.length === 0) {
+                body.innerHTML = `<tr><td class="p-4 text-gray-500" colspan="6">No recipes found.</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map(r => `
+                <tr class="border-t">
+                    <td class="p-2">${r.Recipe_name}</td>
+                    <td class="p-2">${r.Diet_type}</td>
+                    <td class="p-2">${r.Cuisine_type}</td>
+                    <td class="p-2">${Number(r["Protein(g)"]).toFixed(1)}</td>
+                    <td class="p-2">${Number(r["Carbs(g)"]).toFixed(1)}</td>
+                    <td class="p-2">${Number(r["Fat(g)"]).toFixed(1)}</td>
+                </tr>
+            `).join("");
+        }
+
+        function debouncedRecipeSearch() {
+            clearTimeout(recipeSearchDebounce);
+            recipeSearchDebounce = setTimeout(() => {
+                recipeSearchPage = 1;
+                fetchRecipeSearch();
+            }, 300);
+        }
+
+        document.getElementById("recipeKeyword").addEventListener("input", debouncedRecipeSearch);
+        document.getElementById("recipeDietFilter").addEventListener("change", debouncedRecipeSearch);
+        document.getElementById("recipePrevPage").addEventListener("click", () => {
+            if (recipeSearchPage > 1) { recipeSearchPage--; fetchRecipeSearch(); }
+        });
+        document.getElementById("recipeNextPage").addEventListener("click", () => {
+            recipeSearchPage++; fetchRecipeSearch();
+        });
+
+        fetchRecipeSearch(); // load first page on page load
     </script>
 </body>
 </html>
