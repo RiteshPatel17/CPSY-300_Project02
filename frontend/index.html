@@ -9,12 +9,55 @@
 </head>
 <body class="bg-gray-100">
 
-    <header class="bg-blue-600 p-4 text-white">
-        <h1 class="text-3xl font-semibold">Nutritional Insights</h1>
-        <p id="statusBar" class="text-sm text-blue-100 mt-1">Ready. Click a button below to load live data.</p>
+    <header class="bg-blue-600 p-4 text-white flex items-center justify-between flex-wrap gap-2">
+        <div>
+            <h1 class="text-3xl font-semibold">Nutritional Insights</h1>
+            <p id="statusBar" class="text-sm text-blue-100 mt-1">Ready. Click a button below to load live data.</p>
+        </div>
+        <div id="userBar" class="hidden items-center gap-3">
+            <span id="userName" class="font-medium"></span>
+            <button id="logoutBtn" class="bg-blue-800 hover:bg-blue-900 px-3 py-1 rounded text-sm">Logout</button>
+        </div>
     </header>
 
-    <main class="container mx-auto p-6">
+    <div id="authScreen" class="min-h-[70vh] flex items-center justify-center p-6">
+        <div class="bg-white shadow-lg rounded-lg p-8 w-full max-w-md">
+            <h2 class="text-2xl font-semibold mb-1">Welcome</h2>
+            <p class="text-sm text-gray-600 mb-6">Log in or create an account to view the dashboard.</p>
+
+            <div class="flex mb-6 border-b">
+                <button id="tabLogin" class="flex-1 py-2 font-medium border-b-2 border-blue-600 text-blue-600">Log In</button>
+                <button id="tabRegister" class="flex-1 py-2 font-medium text-gray-500">Register</button>
+            </div>
+
+            <p id="authError" class="text-sm text-red-600 mb-3 hidden"></p>
+
+            <form id="loginForm" class="space-y-3">
+                <input id="loginEmail" type="email" placeholder="Email" required class="w-full p-2 border rounded">
+                <input id="loginPassword" type="password" placeholder="Password" required class="w-full p-2 border rounded">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded">Log In</button>
+            </form>
+
+            <form id="registerForm" class="space-y-3 hidden">
+                <input id="registerName" type="text" placeholder="Full name" required class="w-full p-2 border rounded">
+                <input id="registerEmail" type="email" placeholder="Email" required class="w-full p-2 border rounded">
+                <input id="registerPassword" type="password" placeholder="Password (min 8 characters)" required class="w-full p-2 border rounded">
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded">Create Account</button>
+            </form>
+
+            <div class="flex items-center my-5">
+                <div class="flex-1 border-t"></div>
+                <span class="px-3 text-xs text-gray-400">OR</span>
+                <div class="flex-1 border-t"></div>
+            </div>
+
+            <a id="githubLoginBtn" href="#" class="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-900 text-white py-2 rounded">
+                Login with GitHub
+            </a>
+        </div>
+    </div>
+
+    <main id="dashboardMain" class="container mx-auto p-6 hidden">
         <section class="mb-8">
             <h2 class="text-2xl font-semibold mb-4">Explore Nutritional Insights</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -160,7 +203,8 @@
         async function fetchData(type) {
             setStatus(`Loading ${type}...`);
             try {
-                const res = await fetch(ENDPOINTS[type]);
+                const res = await fetch(ENDPOINTS[type], { headers: authHeaders() });
+                if (res.status === 401) { showAuthScreen("Your session expired — please log in again."); return; }
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const json = await res.json();
                 currentType = type;
@@ -355,7 +399,8 @@
                 if (keyword) url.searchParams.set("keyword", keyword);
                 if (dietType && dietType !== "all") url.searchParams.set("diet_type", dietType);
 
-                const res = await fetch(url);
+                const res = await fetch(url, { headers: authHeaders() });
+                if (res.status === 401) { showAuthScreen("Your session expired — please log in again."); return; }
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const json = await res.json();
 
@@ -404,7 +449,153 @@
             recipeSearchPage++; fetchRecipeSearch();
         });
 
-        fetchRecipeSearch(); // load first page on page load
+        // ---------------------------------------------------------------------------
+        // Auth: login, register, GitHub OAuth, session storage, dashboard gating
+        // ---------------------------------------------------------------------------
+        const AUTH_STORAGE_KEY = "nutrition_auth";
+
+        function getAuth() {
+            const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        }
+
+        function setAuth(auth) {
+            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+        }
+
+        function clearAuth() {
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+
+        function authHeaders() {
+            const auth = getAuth();
+            return auth ? { "Authorization": `Bearer ${auth.token}` } : {};
+        }
+
+        function showDashboard(auth) {
+            document.getElementById("authScreen").classList.add("hidden");
+            document.getElementById("dashboardMain").classList.remove("hidden");
+            document.getElementById("userBar").classList.remove("hidden");
+            document.getElementById("userBar").classList.add("flex");
+            document.getElementById("userName").textContent = auth.name || auth.email;
+            fetchRecipeSearch(); // load the search/browse table now that we're authenticated
+        }
+
+        function showAuthScreen(message) {
+            clearAuth();
+            document.getElementById("authScreen").classList.remove("hidden");
+            document.getElementById("dashboardMain").classList.add("hidden");
+            document.getElementById("userBar").classList.add("hidden");
+            document.getElementById("userBar").classList.remove("flex");
+            const err = document.getElementById("authError");
+            if (message) {
+                err.textContent = message;
+                err.classList.remove("hidden");
+            } else {
+                err.classList.add("hidden");
+            }
+        }
+
+        function handleAuthFragment() {
+            if (window.location.hash.startsWith("#token=")) {
+                const params = new URLSearchParams(window.location.hash.slice(1));
+                const token = params.get("token");
+                const name = params.get("name");
+                const email = params.get("email");
+                if (token) {
+                    setAuth({ token, name, email });
+                    history.replaceState(null, "", window.location.pathname);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function initAuth() {
+            handleAuthFragment();
+            const auth = getAuth();
+            if (auth) {
+                showDashboard(auth);
+            } else {
+                showAuthScreen();
+            }
+        }
+
+        document.getElementById("tabLogin").addEventListener("click", () => {
+            document.getElementById("tabLogin").classList.add("border-b-2", "border-blue-600", "text-blue-600");
+            document.getElementById("tabLogin").classList.remove("text-gray-500");
+            document.getElementById("tabRegister").classList.remove("border-b-2", "border-blue-600", "text-blue-600");
+            document.getElementById("tabRegister").classList.add("text-gray-500");
+            document.getElementById("loginForm").classList.remove("hidden");
+            document.getElementById("registerForm").classList.add("hidden");
+            document.getElementById("authError").classList.add("hidden");
+        });
+
+        document.getElementById("tabRegister").addEventListener("click", () => {
+            document.getElementById("tabRegister").classList.add("border-b-2", "border-blue-600", "text-blue-600");
+            document.getElementById("tabRegister").classList.remove("text-gray-500");
+            document.getElementById("tabLogin").classList.remove("border-b-2", "border-blue-600", "text-blue-600");
+            document.getElementById("tabLogin").classList.add("text-gray-500");
+            document.getElementById("registerForm").classList.remove("hidden");
+            document.getElementById("loginForm").classList.add("hidden");
+            document.getElementById("authError").classList.add("hidden");
+        });
+
+        document.getElementById("loginForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const email = document.getElementById("loginEmail").value.trim();
+            const password = document.getElementById("loginPassword").value;
+            const errEl = document.getElementById("authError");
+            try {
+                const res = await fetch(`${API_BASE}/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Login failed");
+                setAuth({ token: data.token, name: data.name, email: data.email });
+                errEl.classList.add("hidden");
+                showDashboard(data);
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.classList.remove("hidden");
+            }
+        });
+
+        document.getElementById("registerForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const name = document.getElementById("registerName").value.trim();
+            const email = document.getElementById("registerEmail").value.trim();
+            const password = document.getElementById("registerPassword").value;
+            const errEl = document.getElementById("authError");
+            try {
+                const res = await fetch(`${API_BASE}/register`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Registration failed");
+                setAuth({ token: data.token, name: data.name, email: data.email });
+                errEl.classList.add("hidden");
+                showDashboard(data);
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.classList.remove("hidden");
+            }
+        });
+
+        document.getElementById("githubLoginBtn").addEventListener("click", (e) => {
+            e.preventDefault();
+            window.location.href = `${API_BASE}/oauth/github/login`;
+        });
+
+        document.getElementById("logoutBtn").addEventListener("click", () => {
+            showAuthScreen();
+        });
+
+        initAuth();
     </script>
 </body>
 </html>
